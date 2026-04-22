@@ -1,10 +1,12 @@
 # main_page页面
 import tkinter as tk
 from tkinter import messagebox, simpledialog
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.styles.numbers import is_date_format
 
 from settings_dialog import SettingsDialog
 
@@ -356,6 +358,48 @@ class MainPage:
         self.root.clipboard_append(patient_id_text)
         self.root.update()
 
+    def get_excel_cell(self, row_index, column):
+        excel_row = row_index + 2
+        excel_col = self.excel_data.columns.get_loc(column) + 1
+        return self.worksheet.cell(row=excel_row, column=excel_col)
+
+    def try_parse_date(self, text):
+        text = str(text).strip()
+        if text == "":
+            return None
+
+        date_formats = [
+            "%Y-%m-%d",
+            "%Y/%m/%d",
+            "%Y.%m.%d",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y.%m.%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y/%m/%d %H:%M",
+            "%Y.%m.%d %H:%M"
+        ]
+
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+
+        return None
+
+    def try_parse_number(self, text):
+        text = str(text).strip()
+        if text == "":
+            return None
+
+        try:
+            if "." in text:
+                return float(text)
+            return int(text)
+        except ValueError:
+            return None
+
     def open_input_window(self, column):
         self.root.attributes("-topmost", False)
 
@@ -365,9 +409,12 @@ class MainPage:
         else:
             current_value = str(current_value)
 
+        cell = self.get_excel_cell(self.current_row, column)
+        cell_format = cell.number_format
+
         input_value = simpledialog.askstring(
             "输入 {0}".format(column),
-            "请输入 {0} 的值:".format(column),
+            "请输入 {0} 的值:\n原单元格格式: {1}".format(column, cell_format),
             initialvalue=current_value,
             parent=self.root
         )
@@ -487,16 +534,32 @@ class MainPage:
         self.modified_cells.clear()
 
     def write_single_cell(self, row_index, column):
-        excel_row = row_index + 2
-        excel_col = self.excel_data.columns.get_loc(column) + 1
-        cell = self.worksheet.cell(row=excel_row, column=excel_col)
-
+        cell = self.get_excel_cell(row_index, column)
         value = self.excel_data.at[row_index, column]
 
-        if pd.isna(value):
+        if pd.isna(value) or value == "":
             cell.value = None
-        else:
-            cell.value = value
+            return
+
+        original_format = cell.number_format
+        original_value = cell.value
+
+        # 如果原单元格是日期格式，优先按日期写入
+        if is_date_format(original_format):
+            parsed_date = self.try_parse_date(value)
+            if parsed_date is not None:
+                cell.value = parsed_date
+                return
+
+        # 如果原单元格本来是数字，优先按数字写入
+        if isinstance(original_value, (int, float)):
+            parsed_number = self.try_parse_number(value)
+            if parsed_number is not None:
+                cell.value = parsed_number
+                return
+
+        # 其他情况按文本写入
+        cell.value = str(value)
 
     def update_button_color(self, button, column):
         current_value = self.excel_data.at[self.current_row, column]
